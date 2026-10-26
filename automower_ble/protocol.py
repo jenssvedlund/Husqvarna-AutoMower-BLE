@@ -99,7 +99,7 @@ def _is_gatt_auth_error(err: Exception) -> bool:
 # Wire encoding of TIF primitive types. All integers are little endian.
 # Mirrors the official app's AutomowerUtils encoder/decoder.
 FIXED_SIZES: dict[str, tuple[int, bool]] = {
-    # type: (size in bytes, signed)
+    # name -> (size in bytes, signed)
     "uint8": (1, False),
     "bool": (1, False),
     "sint8": (1, True),
@@ -357,7 +357,7 @@ class BLEClient:
         self.queue: asyncio.Queue[bytearray] = asyncio.Queue()
 
         self.client: BleakClient | None = None
-        self.protocol = None
+        self.protocol: dict | None = None
         self.platform: str | None = None
         self.events: dict = {}
         self.write_char: BleakGATTCharacteristic | None = None
@@ -390,7 +390,7 @@ class BLEClient:
         existing callers keep working. Returns the platform id, or None if
         the model is unknown.
         """
-        await self.get_protocol()
+        protocol = await self.get_protocol()
 
         def read_tables():
             base = files(__package__).joinpath("protocols")
@@ -406,7 +406,7 @@ class BLEClient:
         )
         if platform is None:
             return None
-        self.protocol = {**self.protocol, **table["commands"]}
+        self.protocol = {**protocol, **table["commands"]}
         self.events = table.get("events", {})
         self.platform = platform
         logger.debug(
