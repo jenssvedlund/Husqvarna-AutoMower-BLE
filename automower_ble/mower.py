@@ -137,7 +137,7 @@ class Mower(BLEClient):
         if (
             response_dict is not None and len(response_dict) == 1
         ):  # If there is only one key in the response, return the value
-            return response_dict["response"]
+            return next(iter(response_dict.values()))
         return response_dict
 
     async def command_response(
@@ -169,7 +169,7 @@ class Mower(BLEClient):
             logger.debug("%s returned unparsable payload: %s", command_name, err)
             return result, None
         if response_dict is not None and len(response_dict) == 1:
-            return result, response_dict["response"]
+            return result, next(iter(response_dict.values()))
         return result, response_dict
 
     async def command_response_locked(
@@ -196,7 +196,7 @@ class Mower(BLEClient):
             logger.debug("%s returned unparsable payload: %s", command_name, err)
             return result, None
         if response_dict is not None and len(response_dict) == 1:
-            return result, response_dict["response"]
+            return result, next(iter(response_dict.values()))
         return result, response_dict
 
     async def get_manufacturer(self) -> str | None:

@@ -116,11 +116,14 @@ def convert(tif: dict) -> dict:
 
 
 def _dump(table: dict) -> str:
-    """Compact JSON with one command/event per line, so diffs stay readable."""
+    """Compact JSON, one command/event per line.
+
+    Field order inside a command is the wire order and must not be sorted.
+    """
     parts = []
     for section in ("commands", "events"):
         rows = [
-            f"  {json.dumps(k)}: {json.dumps(v, sort_keys=True, separators=(',', ':'))}"
+            f"  {json.dumps(k)}: {json.dumps(v, separators=(',', ':'))}"
             for k, v in sorted(table[section].items())
         ]
         parts.append(f' "{section}": {{\n' + ",\n".join(rows) + "\n }")

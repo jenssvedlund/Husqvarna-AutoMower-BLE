@@ -136,3 +136,50 @@ class TestModelTables(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFieldOrderAndValues(unittest.TestCase):
+    def _table(self):
+        base = files("automower_ble").joinpath("protocols")
+        return json.loads(base.joinpath("31.15.json").read_text())["commands"]
+
+    def test_wire_order_is_preserved(self):
+        table = self._table()
+        self.assertEqual(
+            list(table["GeoFence.GetCenterPosition"]["responseType"]),
+            ["longitude", "latitude"],
+        )
+        self.assertEqual(
+            list(table["LeaveChargingStation.GetAllSettings"]["responseType"]),
+            [
+                "reversingDistance",
+                "minAngleSector1",
+                "maxAngleSector1",
+                "minAngleSector2",
+                "maxAngleSector2",
+                "sector1Proportion",
+            ],
+        )
+        self.assertEqual(
+            list(table["Calendar.SetTask"]["requestType"])[:3],
+            ["index", "start", "duration"],
+        )
+
+    def test_single_value_returned_for_named_field(self):
+        from automower_ble.mower import Mower
+
+        class CannedMower(Mower):
+            async def _request_response(self, request):
+                response = bytearray(request[:16])
+                response[10] = 0x01
+                response += b"\x00\x01\x00\x02"  # result OK, length 1, scheme=2
+                return response
+
+        async def run():
+            mower = CannedMower(CHANNEL, "00:00:00:00:00:00")
+            await mower.load_model_protocol(23, 3)
+            value = await mower.command("Headlights.GetScheme")
+            result, value2 = await mower.command_response("Headlights.GetScheme")
+            return value, result.name, value2
+
+        self.assertEqual(asyncio.run(run()), (2, "OK", 2))
