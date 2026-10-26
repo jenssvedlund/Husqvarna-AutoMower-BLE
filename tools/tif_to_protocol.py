@@ -96,7 +96,7 @@ def convert(tif: dict) -> dict:
             entry["loginLevels"] = m["loginLevels"]
         if m.get("description"):
             entry["description"] = m["description"]
-        out[f'{m["family"]}.{m["command"]}'] = entry
+        out[f"{m['family']}.{m['command']}"] = entry
 
     events: dict = {}
     for e in tif.get("events", []):
@@ -104,9 +104,9 @@ def convert(tif: dict) -> dict:
         fields = {}
         for p in e.get("params", []):
             fields[p["name"]] = _resolve(types, p["type"])[0]
-        key = f'{e["family"]}.{e["name"]}'
+        key = f"{e['family']}.{e['name']}"
         if key in events:  # same name reused with a different eventId
-            key = f'{key}#{proto["eventId"]}'
+            key = f"{key}#{proto['eventId']}"
         events[key] = {
             "major": int(proto["family"]),
             "eventId": int(proto["eventId"]),
@@ -151,10 +151,16 @@ def main() -> None:
         written[platform] = len(table["commands"])
 
     models = {
-        dtype: {variant: platform for variant, platform in variants.items() if platform in written}
+        dtype: {
+            variant: platform
+            for variant, platform in variants.items()
+            if platform in written
+        }
         for dtype, variants in index["fallback"].items()
     }
-    (args.out / "models.json").write_text(json.dumps(models, indent=1, sort_keys=True) + "\n")
+    (args.out / "models.json").write_text(
+        json.dumps(models, indent=1, sort_keys=True) + "\n"
+    )
     for p, n in written.items():
         print(f"{p:>6}: {n} commands")
 

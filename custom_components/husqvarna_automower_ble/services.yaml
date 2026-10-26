@@ -1,0 +1,39 @@
+list_commands:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: husqvarna_automower_ble
+    family:
+      example: Headlights
+      selector:
+        text:
+read_all:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: husqvarna_automower_ble
+    family:
+      example: TheftProtection
+      selector:
+        text:
+send_command:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: husqvarna_automower_ble
+    command:
+      required: true
+      example: Headlights.GetScheme
+      selector:
+        text:
+    parameters:
+      example: '{"scheme": 2}'
+      selector:
+        object:
+    allow_write:
+      default: false
+      selector:
+        boolean:

@@ -25,9 +25,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bleak import BleakScanner  # noqa: E402
+from bleak import BleakScanner
 
-from automower_ble.mower import Mower  # noqa: E402
+from automower_ble.mower import Mower
 
 READ_PREFIXES = ("Get", "Is")
 
@@ -42,7 +42,7 @@ def _is_safe_read(name: str, spec: dict) -> bool:
 
 
 def _jsonable(value):
-    if isinstance(value, (bytes, bytearray)):
+    if isinstance(value, bytes | bytearray):
         return value.hex()
     if isinstance(value, dict):
         return {k: _jsonable(v) for k, v in value.items()}
@@ -78,15 +78,22 @@ async def run(args) -> None:
         raise SystemExit(f"Mower {args.address} not found, is it in range and awake?")
 
     result = await mower.connect(device)
-    print(f"connect: {result.name}  model: {await mower.get_model()}  platform: {mower.platform}")
+    print(
+        f"connect: {result.name}  model: {await mower.get_model()}  platform: {mower.platform}"
+    )
     protocol = await mower.get_protocol()
-    report: dict = {"platform": mower.platform, "model": await mower.command("GetModel")}
+    report: dict = {
+        "platform": mower.platform,
+        "model": await mower.command("GetModel"),
+    }
 
     try:
         if args.list:
             for name in sorted(n for n in protocol if "." in n):
                 spec = protocol[name]
-                req = ", ".join(f"{k}:{v}" for k, v in (spec.get("requestType") or {}).items())
+                req = ", ".join(
+                    f"{k}:{v}" for k, v in (spec.get("requestType") or {}).items()
+                )
                 print(f"{name}({req})")
 
         if args.read_all:
@@ -104,7 +111,9 @@ async def run(args) -> None:
                 raise SystemExit(f"Unknown command {args.call}; use --list")
             command = args.call.split(".", 1)[-1]
             if not command.startswith(READ_PREFIXES) and not args.yes:
-                raise SystemExit(f"{args.call} may change the mower; add --yes to send it")
+                raise SystemExit(
+                    f"{args.call} may change the mower; add --yes to send it"
+                )
             kwargs = _parse_args(args.params, spec)
             status, value = await mower.command_response(args.call, **kwargs)
             print(f"{args.call}: {status.name} {value}")
@@ -123,14 +132,20 @@ async def run(args) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--address", required=True, help="mower Bluetooth address")
     ap.add_argument("--pin", type=int, default=None, help="mower PIN code")
     ap.add_argument("--list", action="store_true", help="list commands for this model")
-    ap.add_argument("--read-all", action="store_true", help="run every parameterless getter")
+    ap.add_argument(
+        "--read-all", action="store_true", help="run every parameterless getter"
+    )
     ap.add_argument("--call", metavar="Family.Command", help="send a single command")
     ap.add_argument("params", nargs="*", help="key=value arguments for --call")
-    ap.add_argument("--yes", action="store_true", help="allow commands that change the mower")
+    ap.add_argument(
+        "--yes", action="store_true", help="allow commands that change the mower"
+    )
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)

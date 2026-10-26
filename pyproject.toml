@@ -143,3 +143,10 @@ ignore = [
   "PT009",   # Use a regular `assert` instead of unittest-style `assertEqual`
   "SLF001",  # Private member accessed
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Home Assistant component code follows HA's own import conventions
+"custom_components/**" = ["TC001", "TC002", "TC003"]
+
+[tool.setuptools]
+packages = ["automower_ble"]

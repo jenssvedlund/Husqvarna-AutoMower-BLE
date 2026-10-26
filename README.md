@@ -10,6 +10,50 @@ Details on how this was developed are available at: https://www.alistair23.me/20
 
 This was developed and tested against a Automower 305, but it should work on all Automowers. If you are able to test on different models please do and report any results back.
 
+## This fork: full command set per model
+
+The official Automower Connect app ships machine-readable interface
+definitions for every mower platform. `tools/tif_to_protocol.py` converts
+them into command tables in `automower_ble/protocols/`, and the library loads
+the right table when it connects (based on the mower's device type and
+variant). Every command is then available as `"<Family>.<Command>"`:
+
+```python
+await mower.command("Headlights.GetScheme")
+await mower.command("LeaveChargingStation.SetReversingDistance", distance=600)
+```
+
+The existing command names keep working. To regenerate the tables from your
+own copy of the app:
+
+```shell
+unzip automower-connect.apk 'assets/*' -d extracted
+python tools/tif_to_protocol.py extracted/assets automower_ble/protocols
+python tools/sync_component.py
+```
+
+### Home Assistant (HACS)
+
+`custom_components/husqvarna_automower_ble` is a drop-in replacement for the
+built-in integration with this library bundled. Add this repository in HACS
+as a custom repository (type: Integration), install, and restart. Your
+existing mower setup is kept. It adds three actions:
+
+| Action | What it does |
+| --- | --- |
+| `husqvarna_automower_ble.read_all` | Read-only sweep of every getter for your model |
+| `husqvarna_automower_ble.list_commands` | All commands with parameter types, ranges and options |
+| `husqvarna_automower_ble.send_command` | Send one command by name; writes need `allow_write: true` |
+
+Remove it in HACS and restart to go back to the built-in integration.
+
+### Without Home Assistant
+
+```shell
+python tools/probe.py --address AA:BB:CC:DD:EE:FF --pin 1234 --read-all
+python tools/probe.py --address AA:BB:CC:DD:EE:FF --list
+```
+
 ## Installation
 This library can be installed by 
 ```shell
