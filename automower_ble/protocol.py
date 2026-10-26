@@ -96,6 +96,78 @@ def _is_gatt_auth_error(err: Exception) -> bool:
     return any(text in str(err) for text in GATT_AUTH_ERROR_TEXT)
 
 
+# Wire encoding of TIF primitive types. All integers are little endian.
+# Mirrors the official app's AutomowerUtils encoder/decoder.
+FIXED_SIZES: dict[str, tuple[int, bool]] = {
+    # type: (size in bytes, signed)
+    "uint8": (1, False),
+    "bool": (1, False),
+    "sint8": (1, True),
+    "uint16": (2, False),
+    "sint16": (2, True),
+    "tSimpleVersion": (2, False),
+    "tAngle": (2, True),
+    "uint32": (4, False),
+    "sint32": (4, True),
+    "tUnixTime": (4, False),
+    "uint64": (8, False),
+    "sint64": (8, True),
+}
+
+
+def encode_value(dtype: str, value) -> bytes:
+    """Encode one request parameter."""
+    if dtype in FIXED_SIZES:
+        size, signed = FIXED_SIZES[dtype]
+        if dtype == "bool":
+            value = 1 if value else 0
+        return int(value).to_bytes(size, byteorder="little", signed=signed)
+    if dtype == "ascii":
+        # ISO-8859-1, null terminated
+        return str(value).encode("latin-1") + b"\x00"
+    if dtype == "utf16":
+        # tUCS2: UTF-16LE, null terminated
+        return str(value).encode("utf-16-le") + b"\x00\x00"
+    if dtype == "byteArray":
+        return bytes(value)
+    raise ValueError("Unknown request type: " + dtype)
+
+
+def decode_value(dtype: str, data: bytes, pos: int, is_last: bool):
+    """Decode one response field at ``pos``; return (value, new_pos)."""
+    if dtype in FIXED_SIZES:
+        size, signed = FIXED_SIZES[dtype]
+        if pos + size > len(data):
+            raise ValueError(
+                f"Response too short. Need {pos + size} bytes, got {len(data)}"
+            )
+        value = int.from_bytes(data[pos : pos + size], "little", signed=signed)
+        return value, pos + size
+    if dtype == "remaining_uint":
+        return int.from_bytes(data[pos:], byteorder="little"), len(data)
+    if dtype == "ascii":
+        end = data.find(b"\x00", pos)
+        if end == -1:
+            end = len(data)
+        text = bytes(data[pos:end]).decode("latin-1")
+        # A trailing string owns any padding after its terminator
+        return text, len(data) if is_last else min(end + 1, len(data))
+    if dtype == "utf16":
+        raw = bytes(data[pos:])
+        end = len(raw)
+        for i in range(0, len(raw) - 1, 2):
+            if raw[i] == 0 and raw[i + 1] == 0:
+                end = i
+                break
+        try:
+            return raw[:end].decode("utf-16-le"), len(data)
+        except UnicodeDecodeError as err:
+            raise ValueError("Unable to decode UTF-16 response") from err
+    if dtype == "byteArray":
+        return bytes(data[pos:]), len(data)
+    raise ValueError("Unknown data type: " + dtype)
+
+
 class TaskInformation:
     def __init__(
         self,
@@ -179,29 +251,17 @@ class Command:
                         + ")"
                     )
 
-                if request_type == "uint32":
-                    request_length += 4
-                    request_data += kwargs[request_name].to_bytes(4, byteorder="little")
-                elif request_type == "uint16":
-                    request_length += 2
-                    request_data += kwargs[request_name].to_bytes(2, byteorder="little")
-                elif request_type == "uint8":
-                    request_length += 1
-                    request_data += kwargs[request_name].to_bytes(1, byteorder="little")
-                elif request_type == "bool":
-                    request_length += 1
-                    request_data += (1 if kwargs[request_name] else 0).to_bytes(
-                        1, byteorder="little"
-                    )
-                else:
-                    raise ValueError("Unknown request type: " + request_type)
-        self.request_data[16] = request_length
-
-        self.request_data[17] = 0x00  # high byte of request_length
+                encoded = encode_value(request_type, kwargs[request_name])
+                request_length += len(encoded)
+                request_data += encoded
+        self.request_data[16:18] = request_length.to_bytes(2, byteorder="little")
         if request_length > 0:
             self.request_data += request_data
 
-        self.request_data[2] = len(self.request_data) - 2  # Length
+        # Total length (excludes start byte and packet type), low byte first
+        self.request_data[2:4] = (len(self.request_data) - 2).to_bytes(
+            2, byteorder="little"
+        )
 
         self.request_data[9] = crc(self.request_data, 1, 8)  # CRC
 
@@ -211,74 +271,25 @@ class Command:
 
         return self.request_data
 
-    FIELD_SIZES = {
-        "tUnixTime": 4,
-        "uint32": 4,
-        "uint16": 2,
-        "sint16": 2,
-        "uint8": 1,
-        "bool": 1,
-    }
+    FIELD_SIZES = FIXED_SIZES
 
-    def parse_response(self, response_data: bytearray) -> dict[str, int | str] | None:
-        response_length = response_data[17]
+    def parse_response(
+        self, response_data: bytearray
+    ) -> dict[str, int | str | bytes] | None:
+        response_length = int.from_bytes(response_data[17:19], byteorder="little")
         data = response_data[19 : 19 + response_length]
         if response_length == 0:
             # A response length of 0 indicates that no data is available (e.g. GetMessage when there are no errors)
             # This is a valid "no data available" response, not an error.
             return None
-        response: dict[str, int | str] = {}
+        response: dict[str, int | str | bytes] = {}
         dpos = 0  # data position
-        for name, dtype in self.response_data_type.items():
+        fields = list(self.response_data_type.items())
+        for index, (name, dtype) in enumerate(fields):
             if dtype == "no_response":
                 return None
-            size = self.FIELD_SIZES.get(dtype, 0)
-            if dpos + size > len(data):
-                raise ValueError(
-                    f"Response too short. Need {dpos + size} bytes, got {len(data)}"
-                )
-            if (dtype == "tUnixTime") or (dtype == "uint32"):
-                response[name] = int.from_bytes(
-                    data[dpos : dpos + 4], byteorder="little"
-                )
-                dpos += 4
-            elif dtype == "uint16":
-                response[name] = int.from_bytes(
-                    data[dpos : dpos + 2], byteorder="little"
-                )
-                dpos += 2
-            elif dtype == "sint16":
-                response[name] = int.from_bytes(
-                    data[dpos : dpos + 2], byteorder="little", signed=True
-                )
-                dpos += 2
-            elif dtype == "remaining_uint":
-                response[name] = int.from_bytes(data[dpos:], byteorder="little")
-                dpos = len(data)
-            elif (dtype == "uint8") or (dtype == "bool"):
-                response[name] = data[dpos]
-                dpos += 1
-            elif dtype == "ascii":
-                if len(self.response_data_type) != 1:
-                    raise ValueError(
-                        "ASCII response type can currently only be used when there is only one response type"
-                    )
-                response[name] = data.decode("ascii").rstrip(
-                    "\x00"
-                )  # Remove trailing null bytes
-                dpos += len(data)
-            elif dtype == "utf16":
-                if len(self.response_data_type) != 1:
-                    raise ValueError(
-                        "UTF-16 response type can currently only be used when there is only one response type"
-                    )
-                try:
-                    response[name] = data.decode("utf-16-le").rstrip("\x00")
-                except UnicodeDecodeError as err:
-                    raise ValueError("Unable to decode UTF-16 response") from err
-                dpos += len(data)
-            else:
-                raise ValueError("Unknown data type: " + dtype)
+            is_last = index == len(fields) - 1
+            response[name], dpos = decode_value(dtype, data, dpos, is_last)
         if dpos != len(data):
             raise ValueError(f"Data length mismatch. Read {dpos} bytes of {len(data)}")
         return response
@@ -347,6 +358,8 @@ class BLEClient:
 
         self.client: BleakClient | None = None
         self.protocol = None
+        self.platform: str | None = None
+        self.events: dict = {}
         self.write_char: BleakGATTCharacteristic | None = None
         self.read_char: BleakGATTCharacteristic | None = None
         self._notify_started = False
@@ -364,6 +377,46 @@ class BLEClient:
                 None, read_protocol_file
             )
         return self.protocol
+
+    async def load_model_protocol(
+        self, device_type: int, device_variant: int
+    ) -> str | None:
+        """
+        Add the full command table for a mower model.
+
+        The tables in ``protocols/`` are generated from the official app's
+        interface definitions (see tools/tif_to_protocol.py). Commands are
+        added as ``"<Family>.<Command>"`` next to the existing names, so
+        existing callers keep working. Returns the platform id, or None if
+        the model is unknown.
+        """
+        await self.get_protocol()
+
+        def read_tables():
+            base = files(__package__).joinpath("protocols")
+            models = json.loads(base.joinpath("models.json").read_text())
+            platform = models.get(str(device_type), {}).get(str(device_variant))
+            if platform is None:
+                return None, None
+            table = json.loads(base.joinpath(f"{platform}.json").read_text())
+            return platform, table
+
+        platform, table = await asyncio.get_running_loop().run_in_executor(
+            None, read_tables
+        )
+        if platform is None:
+            return None
+        self.protocol = {**self.protocol, **table["commands"]}
+        self.events = table.get("events", {})
+        self.platform = platform
+        logger.debug(
+            "Loaded %d commands for platform %s", len(table["commands"]), platform
+        )
+        return platform
+
+    async def available_commands(self) -> list[str]:
+        """Names of all commands that can be passed to ``command()``."""
+        return sorted(await self.get_protocol())
 
     async def _get_response(self):
         try:

@@ -60,7 +60,27 @@ class Mower(BLEClient):
             status = await super().connect(device)
             if status == ResponseResult.OK:
                 self._ensure_keep_alive()
+                if self.platform is None:
+                    await self._load_model_protocol()
             return status
+
+    async def _load_model_protocol(self) -> None:
+        """Load the full command table for the connected mower's platform."""
+        try:
+            model = await self.command("GetModel")
+            if model is None:
+                return
+            platform = await self.load_model_protocol(
+                model["deviceType"], model["deviceVariant"]
+            )
+            if platform is None:
+                logger.info(
+                    "No model specific protocol for %s/%s, using generic commands",
+                    model["deviceType"],
+                    model["deviceVariant"],
+                )
+        except Exception as err:  # never fail a connect over this
+            logger.warning("Could not load model specific protocol: %s", err)
 
     def _ensure_keep_alive(self) -> None:
         """Start one keep-alive task for the active mower connection."""
